@@ -132,7 +132,7 @@ function Get-GitDiffFiles {
 
         須注意:
             1. 因為是比對頭尾兩個 Commit 的最終樹狀態，若某檔案在區間內先異動又被還原，diff 不會列出該檔案
-            2. 因是抓最舊與最新 Commit 的差異，如果刪掉中間某個 Commit，該 commit 的異動還是會被算入
+            2. 因是抓最舊與最新 Commit 的差異，如果刪掉 $Sha 中間的某個 Commit，該 commit 的異動還是會被算入
     .PARAMETER Sha
         必要的參數。Commit SHA 清單，順序不拘，通常來自 Get-GitCommitShaInRange 的回傳結果
 

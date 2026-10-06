@@ -516,6 +516,9 @@ function Merge-Files {
     .PARAMETER Separator
         每個檔案內容之間的分隔符號
 
+    .PARAMETER Title
+        所有檔案之前的標題文字
+
     .EXAMPLE
         $SQLFolder = "C:\SQL\DataPatch"
         $OutFile = Join-Path $SQLFolder "merged.sql"
@@ -528,13 +531,14 @@ function Merge-Files {
             $SQLFilePaths += $SQLFile.FullName
         }
 
-        Merge-Files -FilePathList $SQLFilePaths -OutputPath $OutFile -Separator "`r`nGO`r`n"
+        Merge-Files -FilePathList $SQLFilePaths -OutputPath $OutFile -Separator "`r`nGO`r`n" -Title "USE DataBase"
     #>
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)] [string[]]$FilePathList,    # 傳入檔案路徑的字串陣列
-        [Parameter(Mandatory=$true)] [string]$OutputPath,      # 輸出檔案的完整路徑
-        [Parameter(Mandatory=$true)] [string]$Separator         # 分隔符號 (如 "`r`nGO`r`n")
+        [Parameter(Mandatory=$true)] [string[]]$FilePathList,   # 傳入檔案路徑的字串陣列
+        [Parameter(Mandatory=$true)] [string]$OutputPath,       # 輸出檔案的完整路徑
+        [Parameter(Mandatory=$true)] [string]$Separator,        # 分隔符號 (如 "`r`nGO`r`n")
+        [Parameter(Mandatory=$false)] [string]$Title            # 所有檔案之前的標題文字
     )
 
     process {
@@ -554,6 +558,12 @@ function Merge-Files {
             $sw = New-Object System.IO.StreamWriter($fullOutputPath, $false, $encoding)
 
             Write-Host "Starting high-speed merge..." -ForegroundColor Cyan
+
+            # 寫入標題
+            if ($Title -and $sw.BaseStream.Position -eq 0) {
+                $sw.Write($Title)
+                $sw.Write($Separator)
+            }
 
             foreach ($path in $FilePathList) {
                 $fullPath = [System.IO.Path]::GetFullPath($path)
