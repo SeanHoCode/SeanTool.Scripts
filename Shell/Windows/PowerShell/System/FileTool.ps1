@@ -397,6 +397,52 @@ function Get-FolderFileTree {
     }
 }
 
+function Get-FolderFileListItems {
+    <#
+    .SYNOPSIS
+        取得指定資料夾中的檔案清單
+
+    .DESCRIPTION
+        遞迴掃描指定資料夾中的檔案，回傳檔案路徑與大小；可選擇從檔案路徑中排除目標資料夾路徑
+
+    .PARAMETER TargetFolder
+        [String] 要掃描的起始資料夾路徑
+
+    .PARAMETER ExcludeTargetFolder
+        [Switch] 是否從檔案路徑中排除目標資料夾路徑
+
+    .OUTPUTS
+        [PSCustomObject[]] 包含 FullName 與 Length 屬性的檔案清單
+
+    .EXAMPLE
+        Get-FolderFileListItems -TargetFolder "C:\Docs"
+
+    .EXAMPLE
+        Get-FolderFileListItems -TargetFolder "C:\Docs" -ExcludeTargetFolder
+        # FullName 輸出為 Src\File.txt
+    #>
+    param (
+        [string]$TargetFolder,
+        [switch]$ExcludeTargetFolder
+    )
+
+    $Files = Get-ChildItem -LiteralPath $TargetFolder -Recurse -File
+
+    if (-not $ExcludeTargetFolder) {
+        return $Files | Select-Object FullName, Length
+    }
+
+    $RootPath = [System.IO.Path]::GetFullPath($TargetFolder)
+    if (-not $RootPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $RootPath += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    return $Files | Select-Object @{
+        Name = "FullName"
+        Expression = { $_.FullName.Substring($RootPath.Length) }
+    }, Length
+}
+
 function Get-FolderFileList {
     <#
     .SYNOPSIS
@@ -412,23 +458,25 @@ function Get-FolderFileList {
     .PARAMETER OutputFilePath
         匯出的 CSV 檔案儲存路徑
 
+    .PARAMETER ExcludeTargetFolder
+        是否從檔案路徑中排除目標資料夾路徑
+
     .EXAMPLE
         Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv"
+
+    .EXAMPLE
+        Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv" -ExcludeTargetFolder
     #>
     param (
         [string]$TargetFolder = ".",
-        [string]$OutputFilePath = ""
+        [string]$OutputFilePath = "",
+        [switch]$ExcludeTargetFolder
     )
 
     if (Test-Path $TargetFolder) {
         Write-Host "正在掃描目錄並寫入檔案..." -ForegroundColor Cyan
         
-        # -Recurse: 包含子目錄
-        # -File: 只顯示檔案 (排除資料夾)
-        # -Filter: 篩選特定副檔名
-        # Get-ChildItem -Path $TargetPath -Recurse -File -Filter "*.txt"
-        Get-ChildItem -Path $TargetFolder -Recurse -File | 
-        Select-Object FullName, Length | 
+        Get-FolderFileListItems -TargetFolder $TargetFolder -ExcludeTargetFolder:$ExcludeTargetFolder |
         Export-Csv -Path $OutputFilePath -NoTypeInformation -Encoding utf8
         
         Write-Host "完成！檔案已儲存至: $OutputFilePath" -ForegroundColor Green
