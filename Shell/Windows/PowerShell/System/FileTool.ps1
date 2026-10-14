@@ -403,16 +403,19 @@ function Get-FolderFileListItems {
         取得指定資料夾中的檔案清單
 
     .DESCRIPTION
-        遞迴掃描指定資料夾中的檔案，回傳檔案路徑與大小；可選擇從檔案路徑中排除目標資料夾路徑
+        遞迴掃描指定資料夾中的檔案，回傳檔案路徑與大小；可選擇從檔案路徑中排除目標資料夾路徑，或只回傳檔案路徑
 
     .PARAMETER TargetFolder
         [String] 要掃描的起始資料夾路徑
 
     .PARAMETER ExcludeTargetFolder
-        [Switch] 是否從檔案路徑中排除目標資料夾路徑
+        [Switch] 是否從檔案路徑中排除目標資料夾路徑(輸出相對路徑)
+
+    .PARAMETER PathOnly
+        [Switch] 是否只回傳檔案路徑，不包含檔案大小
 
     .OUTPUTS
-        [PSCustomObject[]] 包含 FullName 與 Length 屬性的檔案清單
+        [PSCustomObject[]] 預設包含 FullName 與 Length；指定 PathOnly 時只包含 FullName
 
     .EXAMPLE
         Get-FolderFileListItems -TargetFolder "C:\Docs"
@@ -420,27 +423,37 @@ function Get-FolderFileListItems {
     .EXAMPLE
         Get-FolderFileListItems -TargetFolder "C:\Docs" -ExcludeTargetFolder
         # FullName 輸出為 Src\File.txt
+
+    .EXAMPLE
+        Get-FolderFileListItems -TargetFolder "C:\Docs" -PathOnly
     #>
     param (
         [string]$TargetFolder,
-        [switch]$ExcludeTargetFolder
+        [switch]$ExcludeTargetFolder,
+        [switch]$PathOnly
     )
 
     $Files = Get-ChildItem -LiteralPath $TargetFolder -Recurse -File
 
-    if (-not $ExcludeTargetFolder) {
-        return $Files | Select-Object FullName, Length
+    if ($ExcludeTargetFolder) {
+        $RootPath = [System.IO.Path]::GetFullPath($TargetFolder)
+        if (-not $RootPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+            $RootPath += [System.IO.Path]::DirectorySeparatorChar
+        }
+
+        $FileList = $Files | Select-Object @{
+            Name = "FullName"
+            Expression = { $_.FullName.Substring($RootPath.Length) }
+        }, Length
+    } else {
+        $FileList = $Files | Select-Object FullName, Length
     }
 
-    $RootPath = [System.IO.Path]::GetFullPath($TargetFolder)
-    if (-not $RootPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
-        $RootPath += [System.IO.Path]::DirectorySeparatorChar
+    if ($PathOnly) {
+        return $FileList | Select-Object FullName
     }
 
-    return $Files | Select-Object @{
-        Name = "FullName"
-        Expression = { $_.FullName.Substring($RootPath.Length) }
-    }, Length
+    return $FileList
 }
 
 function Get-FolderFileList {
@@ -459,30 +472,95 @@ function Get-FolderFileList {
         匯出的 CSV 檔案儲存路徑
 
     .PARAMETER ExcludeTargetFolder
-        是否從檔案路徑中排除目標資料夾路徑
+        是否從檔案路徑中排除目標資料夾路徑(輸出相對路徑)
+
+    .PARAMETER PathOnly
+        是否只輸出檔案路徑，不輸出檔案大小
 
     .EXAMPLE
         Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv"
 
     .EXAMPLE
         Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv" -ExcludeTargetFolder
+
+    .EXAMPLE
+        Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv" -PathOnly
     #>
     param (
         [string]$TargetFolder = ".",
         [string]$OutputFilePath = "",
-        [switch]$ExcludeTargetFolder
+        [switch]$ExcludeTargetFolder,
+        [switch]$PathOnly
     )
 
     if (Test-Path $TargetFolder) {
         Write-Host "正在掃描目錄並寫入檔案..." -ForegroundColor Cyan
         
-        Get-FolderFileListItems -TargetFolder $TargetFolder -ExcludeTargetFolder:$ExcludeTargetFolder |
+        Get-FolderFileListItems -TargetFolder $TargetFolder -ExcludeTargetFolder:$ExcludeTargetFolder -PathOnly:$PathOnly |
         Export-Csv -Path $OutputFilePath -NoTypeInformation -Encoding utf8
         
         Write-Host "完成！檔案已儲存至: $OutputFilePath" -ForegroundColor Green
     } else {
         Write-Warning "路徑不存在，請檢查設定。"
     }
+}
+
+function Test-FolderFileList {
+    <#
+    .SYNOPSIS
+        檢查 CSV 檔案清單中的相對路徑是否存在於指定資料夾
+
+    .DESCRIPTION
+        匯入由 Get-FolderFileList -ExcludeTargetFolder -PathOnly 產生的 CSV，
+        並確認每個 FullName 相對路徑在目標資料夾下是否存在。
+
+    .PARAMETER CsvPath
+        由 Get-FolderFileList 產生且包含 FullName 欄位的 CSV 檔案路徑
+
+    .PARAMETER TargetFolder
+        用來檢查 CSV 相對路徑的根目錄
+
+    .OUTPUTS
+        [String[]] CSV 中存在但目標資料夾缺少的相對檔案路徑
+
+    .EXAMPLE
+        Test-FolderFileList -CsvPath "C:\Temp\FileList.csv" -TargetFolder "C:\Output"
+        # 輸出: GSS.Radar.DataHub\bin\GSS.Radar.DataHub.Lol.dll
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [ValidateScript({
+            if (Test-Path -LiteralPath $_ -PathType Leaf) { $true }
+            else { throw "找不到 CSV 檔案: $_" }
+        })]
+        [string]$CsvPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateScript({
+            if (Test-Path -LiteralPath $_ -PathType Container) { $true }
+            else { throw "找不到資料夾: $_" }
+        })]
+        [string]$TargetFolder
+    )
+
+    $rootPath = (Get-Item -LiteralPath $TargetFolder).FullName.TrimEnd('\') + '\'
+    $missingFileList = foreach ($row in Import-Csv -LiteralPath $CsvPath) {
+        if ([string]::IsNullOrWhiteSpace($row.FullName)) {
+            throw "CSV 缺少 FullName 欄位或包含空白路徑: $CsvPath"
+        }
+
+        $filePath = [System.IO.Path]::GetFullPath((Join-Path -Path $rootPath -ChildPath $row.FullName))
+        if (-not $filePath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "CSV 包含不在目標資料夾下的相對路徑: $($row.FullName)"
+        }
+
+        if (-not [System.IO.File]::Exists($filePath)) {
+            $row.FullName
+        }
+    }
+
+    return $missingFileList
 }
 
 function Compare-FolderFiles {
