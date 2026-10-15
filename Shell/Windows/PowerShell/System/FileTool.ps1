@@ -508,11 +508,13 @@ function Get-FolderFileList {
 function Test-FolderFileList {
     <#
     .SYNOPSIS
-        檢查 CSV 檔案清單中的相對路徑是否存在於指定資料夾
+        檢查 CSV 檔案清單中的檔案是否存在，以及修改日期是否符合指定時間
 
     .DESCRIPTION
         匯入由 Get-FolderFileList -ExcludeTargetFolder -PathOnly 產生的 CSV，
         並確認每個 FullName 相對路徑在目標資料夾下是否存在。
+        僅在傳入 LastWriteTime 時，檢查檔案總管的修改日期（本機時間）是否早於指定時間；
+        修改日期等於或晚於指定時間的檔案不列出。
 
     .PARAMETER CsvPath
         由 Get-FolderFileList 產生且包含 FullName 欄位的 CSV 檔案路徑
@@ -520,12 +522,20 @@ function Test-FolderFileList {
     .PARAMETER TargetFolder
         用來檢查 CSV 相對路徑的根目錄
 
+    .PARAMETER LastWriteTime
+        [DateTime] 可選的修改日期下限，使用本機時間；未傳入時只檢查檔案是否存在
+
     .OUTPUTS
-        [String[]] CSV 中存在但目標資料夾缺少的相對檔案路徑
+        [PSCustomObject[]] 包含「檔案路徑」（CSV 相對路徑）與「異常型態」欄位；
+        異常型態為「檔案不存在」或「異動時間早於傳入時間(yyyy/MM/dd HH:mm:ss)」
 
     .EXAMPLE
         Test-FolderFileList -CsvPath "C:\Temp\FileList.csv" -TargetFolder "C:\Output"
-        # 輸出: GSS.Radar.DataHub\bin\GSS.Radar.DataHub.Lol.dll
+        # 僅列出不存在的檔案與異常型態
+
+    .EXAMPLE
+        Test-FolderFileList -CsvPath "C:\Temp\FileList.csv" -TargetFolder "C:\Output" -LastWriteTime "2026-10-15 16:00:00"
+        # 列出不存在或修改日期早於指定本機時間的檔案與異常型態
     #>
     [CmdletBinding()]
     param (
@@ -541,11 +551,13 @@ function Test-FolderFileList {
             if (Test-Path -LiteralPath $_ -PathType Container) { $true }
             else { throw "找不到資料夾: $_" }
         })]
-        [string]$TargetFolder
+        [string]$TargetFolder,
+
+        [datetime]$LastWriteTime
     )
 
     $rootPath = (Get-Item -LiteralPath $TargetFolder).FullName.TrimEnd('\') + '\'
-    $missingFileList = foreach ($row in Import-Csv -LiteralPath $CsvPath) {
+    $abnormalFileList = foreach ($row in Import-Csv -LiteralPath $CsvPath) {
         if ([string]::IsNullOrWhiteSpace($row.FullName)) {
             throw "CSV 缺少 FullName 欄位或包含空白路徑: $CsvPath"
         }
@@ -555,12 +567,24 @@ function Test-FolderFileList {
             throw "CSV 包含不在目標資料夾下的相對路徑: $($row.FullName)"
         }
 
-        if (-not [System.IO.File]::Exists($filePath)) {
-            $row.FullName
+        $abnormalType = if (-not [System.IO.File]::Exists($filePath)) {
+            '檔案不存在'
+        } elseif ($PSBoundParameters.ContainsKey('LastWriteTime')) {
+            $actualLastWriteTime = (Get-Item -LiteralPath $filePath -ErrorAction Stop).LastWriteTime
+            if ($actualLastWriteTime -lt $LastWriteTime) {
+                "異動時間早於傳入時間($($actualLastWriteTime.ToString('yyyy/MM/dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)))"
+            }
+        }
+
+        if ($abnormalType) {
+            [PSCustomObject]@{
+                '檔案路徑' = $row.FullName
+                '異常型態' = $abnormalType
+            }
         }
     }
 
-    return $missingFileList
+    return $abnormalFileList
 }
 
 function Compare-FolderFiles {
