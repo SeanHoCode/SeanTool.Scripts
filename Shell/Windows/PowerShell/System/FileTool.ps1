@@ -403,7 +403,9 @@ function Get-FolderFileListItems {
         取得指定資料夾中的檔案清單
 
     .DESCRIPTION
-        遞迴掃描指定資料夾中的檔案，回傳檔案路徑與大小；可選擇從檔案路徑中排除目標資料夾路徑，或只回傳檔案路徑
+        遞迴掃描指定資料夾中的檔案，回傳檔案路徑、檔案大小與異動時間。
+        大小使用檔案總管「大小」對應的精確 bytes（非磁碟大小）；
+        異動時間使用檔案總管「修改日期」對應的本機時間，格式為 yyyy/MM/dd HH:mm:ss。
 
     .PARAMETER TargetFolder
         [String] 要掃描的起始資料夾路徑
@@ -412,17 +414,18 @@ function Get-FolderFileListItems {
         [Switch] 是否從檔案路徑中排除目標資料夾路徑(輸出相對路徑)
 
     .PARAMETER PathOnly
-        [Switch] 是否只回傳檔案路徑，不包含檔案大小
+        [Switch] 是否只回傳「檔案路徑」，不包含檔案大小與異動時間
 
     .OUTPUTS
-        [PSCustomObject[]] 預設包含 FullName 與 Length；指定 PathOnly 時只包含 FullName
+        [PSCustomObject[]] 預設包含「檔案路徑」、「檔案大小」（bytes）與「異動時間」；
+        指定 PathOnly 時只包含「檔案路徑」
 
     .EXAMPLE
         Get-FolderFileListItems -TargetFolder "C:\Docs"
 
     .EXAMPLE
         Get-FolderFileListItems -TargetFolder "C:\Docs" -ExcludeTargetFolder
-        # FullName 輸出為 Src\File.txt
+        # 檔案路徑輸出為 Src\File.txt
 
     .EXAMPLE
         Get-FolderFileListItems -TargetFolder "C:\Docs" -PathOnly
@@ -440,20 +443,20 @@ function Get-FolderFileListItems {
         if (-not $RootPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
             $RootPath += [System.IO.Path]::DirectorySeparatorChar
         }
-
-        $FileList = $Files | Select-Object @{
-            Name = "FullName"
-            Expression = { $_.FullName.Substring($RootPath.Length) }
-        }, Length
-    } else {
-        $FileList = $Files | Select-Object FullName, Length
     }
 
-    if ($PathOnly) {
-        return $FileList | Select-Object FullName
+    foreach ($File in $Files) {
+        $item = [PSCustomObject]@{
+            '檔案路徑' = if ($ExcludeTargetFolder) { $File.FullName.Substring($RootPath.Length) } else { $File.FullName }
+            '檔案大小' = $File.Length
+            '異動時間' = $File.LastWriteTime.ToString('yyyy/MM/dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        if ($PathOnly) {
+            $item | Select-Object '檔案路徑'
+        } else {
+            $item
+        }
     }
-
-    return $FileList
 }
 
 function Get-FolderFileList {
@@ -462,8 +465,9 @@ function Get-FolderFileList {
         遞迴掃描資料夾中的所有檔案，並匯出詳細清單至 CSV 檔案
 
     .DESCRIPTION
-        此函式會遍歷指定路徑下的所有子目錄，提取每個檔案的完整路徑 (FullName) 與檔案大小 (Length)，
-        並將結果儲存為結構化的 CSV 格式，方便後續在 Excel 或其他資料分析工具中開啟
+        匯出 Get-FolderFileListItems 的三欄清單：「檔案路徑」、「檔案大小」（bytes）、
+        「異動時間」（本機時間，yyyy/MM/dd HH:mm:ss），供 Test-FolderFileListActual 比對。
+        指定 PathOnly 時只匯出「檔案路徑」，供 Test-FolderFileList 檢查
 
     .PARAMETER TargetFolder
         要掃描的起始資料夾路徑
@@ -475,7 +479,7 @@ function Get-FolderFileList {
         是否從檔案路徑中排除目標資料夾路徑(輸出相對路徑)
 
     .PARAMETER PathOnly
-        是否只輸出檔案路徑，不輸出檔案大小
+        是否只輸出「檔案路徑」，不包含檔案大小與異動時間
 
     .EXAMPLE
         Get-FolderFileList -TargetFolder "C:\Docs" -OutputFilePath ".\FileInventory.csv"
@@ -511,13 +515,13 @@ function Test-FolderFileList {
         檢查 CSV 檔案清單中的檔案是否存在，以及修改日期是否符合指定時間
 
     .DESCRIPTION
-        匯入由 Get-FolderFileList -ExcludeTargetFolder -PathOnly 產生的 CSV，
-        並確認每個 FullName 相對路徑在目標資料夾下是否存在。
+        匯入由 Get-FolderFileList 產生的 CSV（亦支援舊版 FullName 欄位），
+        並確認每個檔案路徑在目標資料夾下是否存在。
         僅在傳入 LastWriteTime 時，檢查檔案總管的修改日期（本機時間）是否早於指定時間；
         修改日期等於或晚於指定時間的檔案不列出。
 
     .PARAMETER CsvPath
-        由 Get-FolderFileList 產生且包含 FullName 欄位的 CSV 檔案路徑
+        包含「檔案路徑」或舊版 FullName 欄位的 CSV 檔案路徑
 
     .PARAMETER TargetFolder
         用來檢查 CSV 相對路徑的根目錄
@@ -526,7 +530,7 @@ function Test-FolderFileList {
         [DateTime] 可選的修改日期下限，使用本機時間；未傳入時只檢查檔案是否存在
 
     .OUTPUTS
-        [PSCustomObject[]] 包含「檔案路徑」（CSV 相對路徑）與「異常型態」欄位；
+        [PSCustomObject[]] 包含「檔案路徑」（CSV 原始路徑）與「異常型態」欄位；
         異常型態為「檔案不存在」或「異動時間早於傳入時間(yyyy/MM/dd HH:mm:ss)」
 
     .EXAMPLE
@@ -558,13 +562,18 @@ function Test-FolderFileList {
 
     $rootPath = (Get-Item -LiteralPath $TargetFolder).FullName.TrimEnd('\') + '\'
     $abnormalFileList = foreach ($row in Import-Csv -LiteralPath $CsvPath) {
-        if ([string]::IsNullOrWhiteSpace($row.FullName)) {
-            throw "CSV 缺少 FullName 欄位或包含空白路徑: $CsvPath"
+        $listPath = if ($row.PSObject.Properties['檔案路徑']) { $row.'檔案路徑' } else { $row.FullName }
+        if ([string]::IsNullOrWhiteSpace($listPath)) {
+            throw "CSV 缺少檔案路徑欄位或包含空白路徑: $CsvPath"
         }
 
-        $filePath = [System.IO.Path]::GetFullPath((Join-Path -Path $rootPath -ChildPath $row.FullName))
+        $filePath = if ([System.IO.Path]::IsPathRooted($listPath)) {
+            [System.IO.Path]::GetFullPath($listPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path -Path $rootPath -ChildPath $listPath))
+        }
         if (-not $filePath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "CSV 包含不在目標資料夾下的相對路徑: $($row.FullName)"
+            throw "CSV 包含不在目標資料夾下的路徑: $listPath"
         }
 
         $abnormalType = if (-not [System.IO.File]::Exists($filePath)) {
@@ -578,13 +587,113 @@ function Test-FolderFileList {
 
         if ($abnormalType) {
             [PSCustomObject]@{
-                '檔案路徑' = $row.FullName
+                '檔案路徑' = $listPath
                 '異常型態' = $abnormalType
             }
         }
     }
 
     return $abnormalFileList
+}
+
+function Test-FolderFileListActual {
+    <#
+    .SYNOPSIS
+        比對 CSV 清單與實際檔案的存在性、大小及修改日期
+
+    .DESCRIPTION
+        讀取 Get-FolderFileList 匯出的三欄 CSV，大小以 bytes 比對，修改日期以本機時間比對到秒。
+        時間或大小不同會分別列出；同一檔案兩者都不同時輸出兩筆。
+        相對路徑以 TargetFolder 為根目錄；絕對路徑直接使用，但必須位於 TargetFolder 下。
+
+    .PARAMETER CsvPath
+        包含「檔案路徑」、「檔案大小」與「異動時間」的 CSV 檔案路徑
+
+    .PARAMETER TargetFolder
+        用來比對檔案的根目錄
+
+    .OUTPUTS
+        [PSCustomObject[]] 包含「檔案路徑」、「異常型態」、「清單值」與「實際值」。
+        異常型態為「檔案不存在」、「檔案大小不一致」或「異動時間不一致」。
+        檔案不存在時，清單值為 CSV 路徑，實際值為空；其他異常列出對應大小或時間。
+
+    .EXAMPLE
+        Get-FolderFileList -TargetFolder "C:\Source" -OutputFilePath "C:\Temp\FileList.csv" -ExcludeTargetFolder
+        Test-FolderFileListActual -CsvPath "C:\Temp\FileList.csv" -TargetFolder "C:\Output"
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [ValidateScript({
+            if (Test-Path -LiteralPath $_ -PathType Leaf) { $true }
+            else { throw "找不到 CSV 檔案: $_" }
+        })]
+        [string]$CsvPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateScript({
+            if (Test-Path -LiteralPath $_ -PathType Container) { $true }
+            else { throw "找不到資料夾: $_" }
+        })]
+        [string]$TargetFolder
+    )
+
+    $rootPath = (Get-Item -LiteralPath $TargetFolder -ErrorAction Stop).FullName.TrimEnd('\') + '\'
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    $timeFormat = 'yyyy/MM/dd HH:mm:ss'
+    foreach ($row in Import-Csv -LiteralPath $CsvPath -ErrorAction Stop) {
+        $listPath = $row.'檔案路徑'
+        if ([string]::IsNullOrWhiteSpace($listPath)) {
+            throw "CSV 缺少檔案路徑欄位或包含空白路徑: $CsvPath"
+        }
+        $listSize = [long]0
+        if (-not [long]::TryParse($row.'檔案大小', [System.Globalization.NumberStyles]::None, $culture, [ref]$listSize)) {
+            throw "CSV 檔案大小必須為非負整數 bytes: $listPath"
+        }
+        $listTime = [datetime]::MinValue
+        if (-not [datetime]::TryParseExact($row.'異動時間', $timeFormat, $culture,
+            [System.Globalization.DateTimeStyles]::None, [ref]$listTime)) {
+            throw "CSV 異動時間必須為 ${timeFormat}: $listPath"
+        }
+
+        $filePath = if ([System.IO.Path]::IsPathRooted($listPath)) {
+            [System.IO.Path]::GetFullPath($listPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path -Path $rootPath -ChildPath $listPath))
+        }
+        if (-not $filePath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "CSV 包含不在目標資料夾下的路徑: $listPath"
+        }
+
+        if (-not [System.IO.File]::Exists($filePath)) {
+            [PSCustomObject]@{
+                '檔案路徑' = $listPath
+                '異常型態' = '檔案不存在'
+                '清單值' = $listPath
+                '實際值' = $null
+            }
+            continue
+        }
+
+        $file = Get-Item -LiteralPath $filePath -ErrorAction Stop
+        if ($file.Length -ne $listSize) {
+            [PSCustomObject]@{
+                '檔案路徑' = $listPath
+                '異常型態' = '檔案大小不一致'
+                '清單值' = $listSize
+                '實際值' = $file.Length
+            }
+        }
+        $actualTime = $file.LastWriteTime.ToString($timeFormat, $culture)
+        if ($actualTime -ne $listTime.ToString($timeFormat, $culture)) {
+            [PSCustomObject]@{
+                '檔案路徑' = $listPath
+                '異常型態' = '異動時間不一致'
+                '清單值' = $row.'異動時間'
+                '實際值' = $actualTime
+            }
+        }
+    }
 }
 
 function Compare-FolderFiles {
