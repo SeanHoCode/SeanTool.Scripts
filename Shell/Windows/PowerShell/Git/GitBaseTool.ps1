@@ -5,6 +5,23 @@ function Set-GitEncoding {
     git config --global core.quotepath false
 }
 
+function Test-GitRevision {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [string]$RepoPath,
+        [Parameter(Mandatory = $true)] [string[]]$Revision
+    )
+
+    foreach ($GitRevision in $Revision) {
+        git -C $RepoPath rev-parse --verify --quiet --end-of-options "${GitRevision}^{commit}" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Skipping repository '$RepoPath': Git revision '$GitRevision' was not found."
+            return $false
+        }
+    }
+    return $true
+}
+
 function Update-GitHubRelease {
     <#
     .SYNOPSIS
@@ -132,6 +149,36 @@ function Remove-GitUntrackedFiles {
         git clean -fdx --quiet
 
         Pop-Location
+    }
+}
+
+function Remove-GitGoneBranches {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [string]$RepoPath
+    )
+
+    git -C $RepoPath fetch --prune
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to prune remote references in '$RepoPath'."
+    }
+
+    $CurrentBranch = git -C $RepoPath symbolic-ref --quiet --short HEAD
+    $Branches = git -C $RepoPath for-each-ref '--format=%(refname:short)%09%(upstream:track)' refs/heads
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to list branches in '$RepoPath'."
+    }
+
+    foreach ($Branch in $Branches) {
+        $BranchName, $TrackingStatus = $Branch -split "`t", 2
+        if ($TrackingStatus -ne "[gone]" -or $BranchName -eq $CurrentBranch) {
+            continue
+        }
+
+        git -C $RepoPath branch -d -- $BranchName
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not delete branch '$BranchName' in '$RepoPath'. It may contain unmerged commits."
+        }
     }
 }
 
